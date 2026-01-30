@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { formatNumber } from '#imports'
+import type { FilterChip, SortOption } from '#shared/types/preferences'
+import { onKeyDown } from '@vueuse/core'
 import { debounce } from 'perfect-debounce'
 import { isValidNewPackageName, checkPackageExists } from '~/utils/package-name'
 import { isPlatformSpecificPackage } from '~/utils/platform-packages'
@@ -7,13 +9,15 @@ import { isPlatformSpecificPackage } from '~/utils/platform-packages'
 const route = useRoute()
 const router = useRouter()
 
-// Local input value (updates immediately as user types)
-const inputValue = ref((route.query.q as string) ?? '')
-
-// Debounced URL update for search query
-const updateUrlQuery = debounce((value: string) => {
-  router.replace({ query: { q: value || undefined } })
-}, 250)
+// Preferences (persisted to localStorage)
+const {
+  viewMode,
+  paginationMode,
+  pageSize: preferredPageSize,
+  columns,
+  toggleColumn,
+  resetColumns,
+} = usePackageListPreferences()
 
 // Debounced URL update for page (less aggressive to avoid too many URL changes)
 const updateUrlPage = debounce((page: number) => {
@@ -25,33 +29,11 @@ const updateUrlPage = debounce((page: number) => {
   })
 }, 500)
 
-// Watch input and debounce URL updates
-watch(inputValue, value => {
-  updateUrlQuery(value)
-})
-
 // The actual search query (from URL, used for API calls)
 const query = computed(() => (route.query.q as string) ?? '')
 
-// Sync input with URL when navigating (e.g., back button)
-watch(
-  () => route.query.q,
-  urlQuery => {
-    const value = (urlQuery as string) ?? ''
-    if (inputValue.value !== value) {
-      inputValue.value = value
-    }
-  },
-)
-
-// For glow effect
-const searchInputRef = useTemplateRef('searchInputRef')
-const { focused: isSearchFocused } = useFocus(searchInputRef)
-
 const selectedIndex = ref(0)
 const packageListRef = useTemplateRef('packageListRef')
-
-const resultCount = computed(() => visibleResults.value?.objects.length ?? 0)
 
 // Track if page just loaded (for hiding "Searching..." during view transition)
 const hasInteracted = ref(false)
@@ -62,10 +44,16 @@ onMounted(() => {
   }, 300)
 })
 
-// Infinite scroll state
-const pageSize = 20
-const loadedPages = ref(1)
-const isLoadingMore = ref(false)
+// Infinite scroll / pagination state
+const pageSize = 25
+const currentPage = ref(1)
+
+// Calculate how many results we need based on current page and preferred page size
+const requestedSize = computed(() => {
+  const numericPrefSize = preferredPageSize.value === 'all' ? 250 : preferredPageSize.value
+  // Always fetch at least enough for the current page
+  return Math.max(pageSize, currentPage.value * numericPrefSize)
+})
 
 // Get initial page from URL (for scroll restoration on reload)
 const initialPage = computed(() => {
@@ -73,52 +61,44 @@ const initialPage = computed(() => {
   return Number.isNaN(p) ? 1 : Math.max(1, p)
 })
 
-// Initialize loaded pages from URL on mount
+// Initialize current page from URL on mount
 onMounted(() => {
   if (initialPage.value > 1) {
-    // Load enough pages to show the initial page
-    loadedPages.value = initialPage.value
+    currentPage.value = initialPage.value
   }
 })
 
-// fetch all pages up to current
-const { data: results, status } = useNpmSearch(query, () => ({
-  size: pageSize * loadedPages.value,
-  from: 0,
+// Use incremental search with client-side caching
+const {
+  data: results,
+  status,
+  isLoadingMore,
+  hasMore,
+  fetchMore,
+} = useNpmSearch(query, () => ({
+  size: requestedSize.value,
+  incremental: true,
 }))
 
-// Keep track of previous results to show while loading
-// Use useState so the value persists from SSR to client hydration
+// Track previous query for UI continuity
 const previousQuery = useState('search-previous-query', () => query.value)
-const cachedResults = ref(results.value)
 
-// Update cached results smartly
-watch([results, query], ([newResults, newQuery]) => {
-  if (newResults) {
-    cachedResults.value = newResults
-    previousQuery.value = newQuery
-  }
-})
-
-// Determine if we should show previous results while loading
-// (when new query is a continuation of the old one)
-const isQueryContinuation = computed(() => {
-  const current = query.value.toLowerCase()
-  const previous = previousQuery.value.toLowerCase()
-  return previous && current.startsWith(previous)
-})
+// Update previous query when results change
+watch(
+  () => results.value,
+  newResults => {
+    if (newResults && newResults.objects.length > 0) {
+      previousQuery.value = query.value
+    }
+  },
+)
 
 const resultsMatchQuery = computed(() => {
   return previousQuery.value === query.value
 })
 
-// Show cached results while loading if it's a continuation query
-const rawVisibleResults = computed(() => {
-  if (status.value === 'pending' && isQueryContinuation.value && cachedResults.value) {
-    return cachedResults.value
-  }
-  return results.value
-})
+// Results to display (directly from incremental search)
+const rawVisibleResults = computed(() => results.value)
 
 // Settings for platform package filtering
 const { settings } = useSettings()
@@ -162,14 +142,59 @@ const visibleResults = computed(() => {
   }
 })
 
+// Use structured filters for client-side refinement of search results
+const resultsArray = computed(() => visibleResults.value?.objects ?? [])
+
+// Minimal structured filters usage for search context (no client-side filtering)
+const {
+  filters,
+  sortOption,
+  sortedPackages,
+  availableKeywords,
+  activeFilters,
+  setTextFilter,
+  setSearchScope,
+  setDownloadRange,
+  setSecurity,
+  setUpdatedWithin,
+  toggleKeyword,
+  clearFilter,
+  clearAllFilters,
+  setSort,
+} = useStructuredFilters({
+  packages: resultsArray,
+  initialSort: 'relevance-desc', // Default to search relevance
+})
+
+// Client-side filtered/sorted results for display
+// In search context, we always use server order (relevance) - no client-side filtering
+const displayResults = computed(() => {
+  // When using relevance sort, return original server-sorted results
+  if (sortOption.value === 'relevance-desc' || sortOption.value === 'relevance-asc') {
+    return resultsArray.value
+  }
+
+  return sortedPackages.value
+})
+
+const resultCount = computed(() => displayResults.value.length)
+
+// Handle filter chip removal
+function handleClearFilter(chip: FilterChip) {
+  clearFilter(chip)
+}
+
+// Handle sort change from table
+function handleSortChange(option: SortOption) {
+  setSort(option)
+}
+
 // Should we show the loading spinner?
 const showSearching = computed(() => {
   // Don't show during initial page load (view transition)
   if (!hasInteracted.value) return false
-  // Don't show if we're displaying cached results
-  if (status.value === 'pending' && isQueryContinuation.value && cachedResults.value) return false
-  // Show if pending on first page
-  return status.value === 'pending' && loadedPages.value === 1
+  // Show if pending and no results yet
+  return status.value === 'pending' && displayResults.value.length === 0
 })
 
 const totalPages = computed(() => {
@@ -177,21 +202,12 @@ const totalPages = computed(() => {
   return Math.ceil(visibleResults.value.total / pageSize)
 })
 
-const hasMore = computed(() => {
-  return loadedPages.value < totalPages.value
-})
-
 // Load more when triggered by infinite scroll
-function loadMore() {
+async function loadMore() {
   if (isLoadingMore.value || !hasMore.value) return
-
-  isLoadingMore.value = true
-  loadedPages.value++
-
-  // Reset loading state after data updates
-  nextTick(() => {
-    isLoadingMore.value = false
-  })
+  // Increase requested size to trigger fetch
+  currentPage.value++
+  await fetchMore(requestedSize.value)
 }
 
 // Update URL when page changes from scrolling
@@ -199,9 +215,9 @@ function handlePageChange(page: number) {
   updateUrlPage(page)
 }
 
-// Reset pages when query changes
+// Reset page when query changes
 watch(query, () => {
-  loadedPages.value = 1
+  currentPage.value = 1
   hasInteracted.value = true
 })
 
@@ -623,38 +639,14 @@ function scrollToSelectedItem() {
   }
 }
 
-function focusSelectedItem() {
-  const suggIdx = toSuggestionIndex(unifiedSelectedIndex.value)
-  const pkgIdx = toPackageIndex(unifiedSelectedIndex.value)
-
-  nextTick(() => {
-    if (suggIdx !== null) {
-      const el = document.querySelector<HTMLElement>(`[data-suggestion-index="${suggIdx}"]`)
-      el?.focus()
-    } else if (pkgIdx !== null) {
-      scrollToSelectedItem()
-      nextTick(() => {
-        const el = document.querySelector<HTMLElement>(`[data-result-index="${pkgIdx}"]`)
-        el?.focus()
-      })
-    }
-  })
-}
-
 function handleResultsKeydown(e: KeyboardEvent) {
   if (totalSelectableCount.value <= 0) return
-
-  const isFromInput = (e.target as HTMLElement).tagName === 'INPUT'
 
   if (e.key === 'ArrowDown') {
     e.preventDefault()
     userHasNavigated.value = true
     unifiedSelectedIndex.value = clampUnifiedIndex(unifiedSelectedIndex.value + 1)
-    if (isFromInput) {
-      scrollToSelectedItem()
-    } else {
-      focusSelectedItem()
-    }
+    scrollToSelectedItem()
     return
   }
 
@@ -662,11 +654,7 @@ function handleResultsKeydown(e: KeyboardEvent) {
     e.preventDefault()
     userHasNavigated.value = true
     unifiedSelectedIndex.value = clampUnifiedIndex(unifiedSelectedIndex.value - 1)
-    if (isFromInput) {
-      scrollToSelectedItem()
-    } else {
-      focusSelectedItem()
-    }
+    scrollToSelectedItem()
     return
   }
 
@@ -692,6 +680,8 @@ function handleResultsKeydown(e: KeyboardEvent) {
   }
 }
 
+onKeyDown(['ArrowDown', 'ArrowUp', 'Enter'], handleResultsKeydown)
+
 function handleSuggestionSelect(index: number) {
   // Convert suggestion index to unified index
   unifiedSelectedIndex.value = -(suggestionCount.value - index)
@@ -713,62 +703,10 @@ defineOgImageComponent('Default', {
 </script>
 
 <template>
-  <main class="overflow-x-hidden">
-    <!-- Sticky search header - positioned below AppHeader (h-14 = 56px) -->
-    <header class="sticky top-14 z-40 bg-bg/95 backdrop-blur-sm border-b border-border">
-      <div class="container-sm py-4">
-        <h1 class="font-mono text-xl sm:text-2xl font-medium mb-4">{{ $t('nav.search') }}</h1>
-
-        <search>
-          <form role="search" method="GET" action="/search" class="relative" @submit.prevent>
-            <label for="search-input" class="sr-only">{{ $t('search.label') }}</label>
-
-            <div class="relative group" :class="{ 'is-focused': isSearchFocused }">
-              <!-- Subtle glow effect -->
-              <div
-                class="absolute -inset-px rounded-lg bg-gradient-to-r from-fg/0 via-fg/5 to-fg/0 opacity-0 transition-opacity duration-500 blur-sm group-[.is-focused]:opacity-100 motion-reduce:transition-none"
-              />
-
-              <div class="search-box relative flex items-center">
-                <span
-                  class="absolute left-4 text-fg-subtle font-mono text-base pointer-events-none transition-colors duration-200 group-focus-within:text-accent"
-                  aria-hidden="true"
-                >
-                  /
-                </span>
-                <input
-                  id="search-input"
-                  ref="searchInputRef"
-                  v-model="inputValue"
-                  type="search"
-                  name="q"
-                  :placeholder="$t('search.placeholder')"
-                  v-bind="noCorrect"
-                  autofocus
-                  class="w-full max-w-full bg-bg-subtle border border-border rounded-lg pl-8 pr-10 py-3 font-mono text-base text-fg placeholder:text-fg-subtle transition-colors duration-300 focus:border-accent focus-visible:outline-none appearance-none"
-                  @keydown="handleResultsKeydown"
-                />
-                <button
-                  v-show="inputValue"
-                  type="button"
-                  class="absolute right-3 p-2 text-fg-subtle hover:text-fg transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg/50 rounded"
-                  :aria-label="$t('search.clear')"
-                  @click="inputValue = ''"
-                >
-                  <span class="i-carbon-close-large block w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-                <!-- Hidden submit button for accessibility (form must have submit button per WCAG) -->
-                <button type="submit" class="sr-only">{{ $t('search.button') }}</button>
-              </div>
-            </div>
-          </form>
-        </search>
-      </div>
-    </header>
-
+  <main class="flex-1 overflow-x-hidden">
     <!-- Results area with container padding -->
-    <div class="container-sm pt-20 pb-6">
-      <section v-if="query" :aria-label="$t('search.results')" @keydown="handleResultsKeydown">
+    <div class="container-sm py-6">
+      <section v-if="query" :aria-label="$t('search.results')">
         <!-- Initial loading (only after user interaction, not during view transition) -->
         <LoadingSpinner v-if="showSearching" :text="$t('search.searching')" />
 
@@ -810,16 +748,62 @@ defineOgImageComponent('Default', {
             </button>
           </div>
 
-          <p
-            v-if="visibleResults.total > 0"
-            role="status"
-            class="text-fg-muted text-sm mb-6 font-mono"
-          >
-            {{ $t('search.found_packages', { count: formatNumber(visibleResults.total) }) }}
-            <span v-if="status === 'pending'" class="text-fg-subtle">{{
-              $t('search.updating')
-            }}</span>
-          </p>
+          <!-- Enhanced toolbar -->
+          <div v-if="visibleResults.total > 0" class="mb-6">
+            <PackageListToolbar
+              :filters="filters"
+              v-model:sort-option="sortOption"
+              v-model:view-mode="viewMode"
+              :columns="columns"
+              v-model:pagination-mode="paginationMode"
+              v-model:page-size="preferredPageSize"
+              :total-count="visibleResults.total"
+              :filtered-count="displayResults.length"
+              :available-keywords="availableKeywords"
+              :active-filters="activeFilters"
+              search-context
+              @toggle-column="toggleColumn"
+              @reset-columns="resetColumns"
+              @clear-filter="handleClearFilter"
+              @clear-all-filters="clearAllFilters"
+              @update:text="setTextFilter"
+              @update:search-scope="setSearchScope"
+              @update:download-range="setDownloadRange"
+              @update:security="setSecurity"
+              @update:updated-within="setUpdatedWithin"
+              @toggle-keyword="toggleKeyword"
+            />
+            <!-- Show "Found X packages" (infinite scroll mode only) -->
+            <p
+              v-if="viewMode === 'cards' && paginationMode === 'infinite'"
+              role="status"
+              class="text-fg-muted text-sm mt-4 font-mono"
+            >
+              {{
+                $t(
+                  'search.found_packages',
+                  { count: formatNumber(visibleResults.total) },
+                  visibleResults.total,
+                )
+              }}
+              <span v-if="status === 'pending'" class="text-fg-subtle">{{
+                $t('search.updating')
+              }}</span>
+            </p>
+            <!-- Show "x of y packages" (paginated/table mode only) -->
+            <p
+              v-if="viewMode === 'table' || paginationMode === 'paginated'"
+              role="status"
+              class="text-fg-muted text-sm mt-4 font-mono"
+            >
+              {{
+                $t('filters.count.showing_paginated', {
+                  pageSize: preferredPageSize === 'all' ? visibleResults.total : preferredPageSize,
+                  total: visibleResults.total.toLocaleString(),
+                })
+              }}
+            </p>
+          </div>
 
           <!-- No results found -->
           <div v-else-if="status !== 'pending'" role="status" class="py-12">
@@ -860,20 +844,36 @@ defineOgImageComponent('Default', {
           </div>
 
           <PackageList
-            v-if="visibleResults.objects.length > 0"
+            v-if="displayResults.length > 0"
             ref="packageListRef"
-            :results="visibleResults.objects"
+            :results="displayResults"
             :selected-index="selectedIndex"
             :search-query="query"
             heading-level="h2"
             show-publisher
             :has-more="hasMore"
-            :is-loading="isLoadingMore || (status === 'pending' && loadedPages > 1)"
-            :page-size="pageSize"
+            :is-loading="isLoadingMore"
+            :page-size="preferredPageSize"
             :initial-page="initialPage"
+            :view-mode="viewMode"
+            :columns="columns"
+            v-model:sort-option="sortOption"
+            :pagination-mode="paginationMode"
+            :current-page="currentPage"
             @load-more="loadMore"
             @page-change="handlePageChange"
             @select="handlePackageSelect"
+            @click-keyword="toggleKeyword"
+          />
+
+          <!-- Pagination controls -->
+          <PaginationControls
+            v-if="displayResults.length > 0"
+            v-model:mode="paginationMode"
+            v-model:page-size="preferredPageSize"
+            v-model:current-page="currentPage"
+            :total-items="visibleResults?.total ?? displayResults.length"
+            :view-mode="viewMode"
           />
         </div>
       </section>

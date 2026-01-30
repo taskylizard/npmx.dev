@@ -79,6 +79,15 @@ export default defineNuxtConfig({
     '/**': { isr: 60 },
     '/package/**': { isr: 60 },
     '/search': { isr: false, cache: false },
+    // infinite cache (versioned - doesn't change)
+    '/code/**': { isr: true, cache: { maxAge: 365 * 24 * 60 * 60 } },
+    '/api/registry/docs/**': { isr: true, cache: { maxAge: 365 * 24 * 60 * 60 } },
+    '/api/registry/file/**': { isr: true, cache: { maxAge: 365 * 24 * 60 * 60 } },
+    '/api/registry/files/**': { isr: true, cache: { maxAge: 365 * 24 * 60 * 60 } },
+    // static pages
+    '/about': { prerender: true },
+    '/settings': { prerender: true },
+    // proxy for insights
     '/_v/script.js': { proxy: 'https://npmx.dev/_vercel/insights/script.js' },
     '/_v/view': { proxy: 'https://npmx.dev/_vercel/insights/view' },
     '/_v/event': { proxy: 'https://npmx.dev/_vercel/insights/event' },

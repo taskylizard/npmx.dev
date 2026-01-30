@@ -189,6 +189,18 @@ import { hasProtocol } from 'ufo'
 | Constants        | SCREAMING_SNAKE_CASE     | `NPM_REGISTRY`, `ALLOWED_TAGS` |
 | Types/Interfaces | PascalCase               | `NpmSearchResponse`            |
 
+> [!TIP]
+> Exports in `app/composables/`, `app/utils/`, and `server/utils/` are auto-imported by Nuxt. To prevent [knip](https://knip.dev/) from flagging them as unused, add a `@public` JSDoc annotation:
+>
+> ```typescript
+> /**
+>  * @public
+>  */
+> export function myAutoImportedFunction() {
+>   // ...
+> }
+> ```
+
 ### Vue components
 
 - Use Composition API with `<script setup lang="ts">`
@@ -208,6 +220,21 @@ const props = defineProps<{
 
 Ideally, extract utilities into separate files so they can be unit tested. 🙏
 
+## RTL Support
+
+We support `right-to-left` languages, we need to make sure that the UI is working correctly in both directions.
+
+Simple approach used by most websites of relying on direction set in HTML element does not work because direction for various items, such as timeline, does not always match direction set in HTML.
+
+We've added some `UnoCSS` utilities styles to help you with that:
+
+- Do not use `left/right` padding and margin: for example `pl-1`. Use `padding-inline-start/end` instead. So `pl-1` should be `ps-1`, `pr-1` should be `pe-1`. The same rules apply to margin.
+- Do not use `rtl-` classes, such as `rtl-left-0`.
+- For icons that should be rotated for RTL, add `class="rtl-flip"`. This can only be used for icons outside of elements with `dir="auto"`.
+- For absolute positioned elements, don't use `left/right`: for example `left-0`. Use `inset-inline-start/end` instead. `UnoCSS` shortcuts are `inset-is` for `inset-inline-start` and `inset-ie` for `inset-inline-end`. Example: `left-0` should be replaced with `inset-is-0`.
+- If you need to change the border radius for an entire left or right side, use `border-inline-start/end`. `UnoCSS` shortcuts are `rounded-is` for left side, `rounded-ie` for right side. Example: `rounded-l-5` should be replaced with `rounded-is-5`.
+- If you need to change the border radius for one corner, use `border-start-end-radius` and similar rules. `UnoCSS` shortcuts are `rounded` + top/bottom as either `-bs` (top) or `-be` (bottom) + left/right as either `-is` (left) or `-ie` (right). Example: `rounded-tl-0` should be replaced with `rounded-bs-is-0`.
+
 ## Localization (i18n)
 
 npmx.dev uses [@nuxtjs/i18n](https://i18n.nuxtjs.org/) for internationalization. We aim to make the UI accessible to users in their preferred language.
@@ -215,13 +242,63 @@ npmx.dev uses [@nuxtjs/i18n](https://i18n.nuxtjs.org/) for internationalization.
 ### Approach
 
 - All user-facing strings should use translation keys via `$t()` in templates and script
-- Translation files live in `i18n/locales/` (e.g., `en.json`)
-- We use the `no_prefix` strategy (no `/en/` or `/fr/` in URLs)
+- Translation files live in [`i18n/locales/`](i18n/locales) (e.g., `en-US.json`)
+- We use the `no_prefix` strategy (no `/en-US/` or `/fr-FR/` in URLs)
 - Locale preference is stored in cookies and respected on subsequent visits
+
+### Adding a new locale
+
+We are using localization using country variants (ISO-6391) via [multiple translation files](https://i18n.nuxtjs.org/docs/guide/lazy-load-translations#multiple-files-lazy-loading) to avoid repeating every key per country.
+
+The [config/i18n.ts](./config/i18n.ts) configuration file will be used to register the new locale:
+
+- `countryLocaleVariants` object will be used to register the country variants
+- `locales` object will be used to link the supported locales (country and single one)
+- `buildLocales` function will build the target locales
+
+To add a new locale:
+
+1. Create a new JSON file in [`i18n/locales/`](./i18n/locales) with the locale code as the filename (e.g., `uk-UA.json`, `de-DE.json`)
+2. Copy [`en.json`](./i18n/locales/en.json) and translate the strings
+3. Add the locale to the `locales` array in [config/i18n.ts](./config/i18n.ts):
+
+   ```typescript
+   {
+     code: 'uk-UA',        // Must match the filename (without .json)
+     file: 'uk-UA.json',
+     name: 'Українська',   // Native name of the language
+   },
+   ```
+
+4. Copy your translation file to `lunaria/files/` for translation tracking:
+
+   ```bash
+   cp i18n/locales/uk-UA.json lunaria/files/uk-UA.json
+   ```
+
+   > [!IMPORTANT]
+   > This file must be committed. Lunaria uses git history to track translation progress, so the build will fail if this file is missing.
+
+5. If the language is `right-to-left`, add `dir: 'rtl'` (see `ar-EG` in config for example)
+6. If the language requires special pluralization rules, add a `pluralRule` callback (see `ar-EG` or `ru-RU` in config for examples)
+
+Check [Pluralization rule callback](https://vue-i18n.intlify.dev/guide/essentials/pluralization.html#custom-pluralization) for more info.
+
+#### Country variants (advanced)
+
+Most languages only need a single locale file. Country variants are only needed when you want to support regional differences (e.g., `es-ES` for Spain vs `es-419` for Latin America).
+
+If you need country variants:
+
+1. Create a base language file (e.g., `es.json`) with all translations
+2. Create country variant files (e.g., `es-ES.json`, `es-419.json`) with only the differing translations
+3. Register the base language in `locales` and add variants to `countryLocaleVariants`
+
+See how `es`, `es-ES`, and `es-419` are configured in [config/i18n.ts](./config/i18n.ts) for a complete example.
 
 ### Adding translations
 
-1. Add your translation key to `i18n/locales/en.json` first (English is the source of truth)
+1. Add your translation key to `i18n/locales/en.json` first (American English is the source of truth)
 2. Use the key in your component:
 
    ```vue
@@ -266,22 +343,6 @@ We recommend the [i18n-ally](https://marketplace.visualstudio.com/items?itemName
 - Easy navigation to translation files
 
 The extension is included in our workspace recommendations, so VSCode should prompt you to install it.
-
-### Adding a new locale
-
-1. Create a new JSON file in `i18n/locales/` (e.g., `fr.json`)
-2. Add the locale to `nuxt.config.ts`:
-
-   ```typescript
-   i18n: {
-     locales: [
-       { code: 'en', language: 'en-US', name: 'English', file: 'en.json' },
-       { code: 'fr', language: 'fr-FR', name: 'Francais', file: 'fr.json' },
-     ],
-   }
-   ```
-
-3. Translate all keys from `en.json`
 
 ### Formatting with locale
 

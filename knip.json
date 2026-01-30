@@ -2,7 +2,8 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "includeEntryExports": true,
   "ignoreExportsUsedInFile": true,
-  "ignoreBinaries": ["simple-git-hooks", "lint-staged"],
+  "ignoreBinaries": ["simple-git-hooks", "lint-staged", "lex"],
+  "ignore": ["shared/types/lexicons/**"],
   "workspaces": {
     ".": {
       "entry": [
@@ -18,6 +19,7 @@
         "app/utils/**/*.ts!",
         "app/plugins/**/*.ts!",
         "app/components/**/*.vue!",
+        "config/**/*.ts!",
         "server/utils/**/*.ts!",
         "shared/**/*.ts!"
       ],
