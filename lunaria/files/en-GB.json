@@ -997,7 +997,7 @@
     "view_in_browser": "View in code browser",
     "close_diff": "Close diff",
     "lines_hidden": "{count} lines hidden",
-    "compare_versions": "Diff",
+    "compare_versions": "diff",
     "summary": "Summary",
     "deps_count": "{count} deps",
     "dependencies": "Dependencies",
