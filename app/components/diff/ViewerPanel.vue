@@ -215,9 +215,9 @@ function getCodeUrl(version: string): string {
   <div class="h-full flex flex-col bg-bg">
     <!-- Header -->
     <div
-      class="flex items-center justify-between px-4 py-3 bg-bg-subtle border-b border-border shrink-0"
+      class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-bg-subtle border-b border-border shrink-0"
     >
-      <div class="flex items-center gap-3 min-w-0">
+      <div class="flex items-center gap-3 min-w-0 flex-1">
         <!-- File icon based on type -->
         <span
           :class="[
@@ -231,7 +231,7 @@ function getCodeUrl(version: string): string {
         />
 
         <!-- File path -->
-        <span class="font-mono text-sm truncate">{{ file.path }}</span>
+        <span class="font-mono text-sm truncate max-w-[65vw] sm:max-w-none">{{ file.path }}</span>
 
         <!-- Stats -->
         <template v-if="diff?.stats">
@@ -277,20 +277,18 @@ function getCodeUrl(version: string): string {
           <!-- Dropdown menu -->
           <motion.div
             v-if="showOptions"
-            class="absolute right-0 top-full mt-2 z-20 p-4 bg-bg-elevated/40 backdrop-blur-sm border border-border shadow-2xl overflow-hidden"
-            :initial="{ width: 220, height: 110, borderRadius: 20 }"
-            :animate="{
-              width: mergeModifiedLines ? 400 : 220,
-              height: mergeModifiedLines ? 260 : 110,
-              borderRadius: mergeModifiedLines ? 14 : 20,
+            class="absolute right-0 top-full mt-2 z-20 p-4 bg-bg-elevated border border-border shadow-2xl overflow-auto"
+            :style="{
+              width: mergeModifiedLines
+                ? 'min(420px, calc(100vw - 24px))'
+                : 'min(320px, calc(100vw - 24px))',
+              maxWidth: 'calc(100vw - 24px)',
+              maxHeight: '70vh',
+              borderRadius: mergeModifiedLines ? '14px' : '20px',
             }"
-            :transition="{
-              type: 'spring',
-              stiffness: 550,
-              damping: 45,
-              mass: 0.7,
-              delay: mergeModifiedLines ? 0 : 0.08,
-            }"
+            :initial="{ opacity: 0, y: -4, scale: 0.98 }"
+            :animate="{ opacity: 1, y: 0, scale: 1 }"
+            :transition="{ type: 'spring', stiffness: 550, damping: 45, mass: 0.7 }"
           >
             <div class="flex flex-col gap-2">
               <!-- Merge modified lines toggle -->
@@ -309,7 +307,7 @@ function getCodeUrl(version: string): string {
                   <label for="change-ratio">Change ratio</label>
                 </div>
                 <div
-                  class="slider-shell min-w-[360px]"
+                  class="slider-shell w-full min-w-0"
                   :class="{ 'is-disabled': !mergeModifiedLines }"
                 >
                   <div class="slider-labels">
@@ -342,7 +340,7 @@ function getCodeUrl(version: string): string {
                   <label for="diff-distance">Diff distance</label>
                 </div>
                 <div
-                  class="slider-shell min-w-[360px]"
+                  class="slider-shell w-full min-w-0"
                   :class="{ 'is-disabled': !mergeModifiedLines }"
                 >
                   <div class="slider-labels">
@@ -375,7 +373,7 @@ function getCodeUrl(version: string): string {
                   <label for="char-edits">Char edits</label>
                 </div>
                 <div
-                  class="slider-shell min-w-[360px]"
+                  class="slider-shell w-full min-w-0"
                   :class="{ 'is-disabled': !mergeModifiedLines }"
                 >
                   <div class="slider-labels">
