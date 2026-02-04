@@ -64,30 +64,31 @@ const allChanges = computed(() => {
   ].sort((a, b) => a.path.localeCompare(b.path))
 })
 
-// Sync selection with ?file= query for shareable links
-watch(
-  [() => route.query.file, compare],
-  ([filePath]) => {
-    if (initializedFromQuery.value || !filePath || !compare.value) return
-    const match = allChanges.value.find(f => f.path === filePath)
-    if (match) {
-      selectedFile.value = match
-      initializedFromQuery.value = true
-    }
-  },
-  { immediate: true },
-)
+const selectedFromQuery = computed(() => {
+  const filePath = route.query.file
+  if (!filePath || !compare.value) return null
+  return allChanges.value.find(f => f.path === filePath) ?? null
+})
 
-watch(
-  selectedFile,
-  file => {
-    const query = { ...route.query }
-    if (file?.path) query.file = file.path
-    else delete query.file
-    router.replace({ query })
-  },
-  { deep: false },
-)
+// Sync selection with ?file= query for shareable links (SSR + client)
+watchEffect(() => {
+  if (initializedFromQuery.value || !selectedFromQuery.value) return
+  selectedFile.value = selectedFromQuery.value
+  initializedFromQuery.value = true
+})
+
+if (import.meta.client) {
+  watch(
+    selectedFile,
+    file => {
+      const query = { ...route.query }
+      if (file?.path) query.file = file.path
+      else delete query.file
+      router.replace({ query })
+    },
+    { deep: false },
+  )
+}
 
 const groupedDeps = computed(() => {
   if (!compare.value?.dependencyChanges) return new Map()
